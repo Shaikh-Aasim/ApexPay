@@ -1,0 +1,20 @@
+{
+  "accuracy": 0.9688,
+  "precision": 0.2857142857142857,
+  "recall": 0.05555555555555555,
+  "f1_score": 0.09302325581395349,
+  "model_version": "rf-1",
+  "features": [
+    "amount",
+    "txn_count_24h",
+    "device_change",
+    "location_anomaly",
+    "receiver_suspicion_score",
+    "receiver_flagged",
+    "user_avg_amount_30d",
+    "user_std_amount_30d",
+    "amount_zscore"
+  ],
+  "samples": 5000,
+  "positive_rate": 0.0288
+}
