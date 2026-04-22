@@ -32,10 +32,12 @@ export default function Home() {
   const txnId = init?.txnId ?? status?.id ?? null;
 
   const step = useMemo(() => {
-    if (!init) return "FORM";
-    if (init.status === "HOLD" || status?.status === "HOLD") return "HOLD";
+    if (!init && !status) return "FORM";
+    if (status?.status && status.status !== "HOLD") return "RESULT";
+    if (status?.status === "HOLD") return "HOLD";
+    if (init?.status === "HOLD") return "HOLD";
     return "RESULT";
-  }, [init, status?.status]);
+  }, [init, status]);
 
   async function refreshStatus(id: string) {
     const s = await getPaymentStatus(id);
@@ -92,7 +94,8 @@ export default function Home() {
         setOtp(r.otpDebug ?? "");
       }
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "UNKNOWN_ERROR");
+      const msg = e instanceof Error ? e.message : "UNKNOWN_ERROR";
+      setErr(msg === "BACKEND_INVALID_JSON" ? "Backend returned invalid JSON. Restart backend + refresh the page." : msg);
     } finally {
       setBusy(false);
     }
@@ -100,13 +103,24 @@ export default function Home() {
 
   async function onConfirm() {
     if (!init?.txnId) return;
+    if (status?.status && status.status !== "HOLD") {
+      setErr("Transaction is not in HOLD anymore. Refreshing status...");
+      await refreshStatus(init.txnId).catch(() => undefined);
+      return;
+    }
     setBusy(true);
     setErr(null);
     try {
       const s = await confirmPayment({ txnId: init.txnId, otp, pin });
       setStatus(s);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "UNKNOWN_ERROR");
+      const msg = e instanceof Error ? e.message : "UNKNOWN_ERROR";
+      if (msg === "NOT_HOLD") {
+        setErr("Transaction is not in HOLD anymore. Refreshing status...");
+        await refreshStatus(init.txnId).catch(() => undefined);
+      } else {
+        setErr(msg === "BACKEND_INVALID_JSON" ? "Backend returned invalid JSON. Restart backend + refresh the page." : msg);
+      }
     } finally {
       setBusy(false);
     }
@@ -114,13 +128,24 @@ export default function Home() {
 
   async function onCancel() {
     if (!init?.txnId) return;
+    if (status?.status && status.status !== "HOLD") {
+      setErr("Transaction is not in HOLD anymore. Refreshing status...");
+      await refreshStatus(init.txnId).catch(() => undefined);
+      return;
+    }
     setBusy(true);
     setErr(null);
     try {
       const s = await cancelPayment({ txnId: init.txnId, actorUserId: notificationsUserId.trim() || undefined });
       setStatus(s);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "UNKNOWN_ERROR");
+      const msg = e instanceof Error ? e.message : "UNKNOWN_ERROR";
+      if (msg === "NOT_HOLD") {
+        setErr("Transaction is not in HOLD anymore. Refreshing status...");
+        await refreshStatus(init.txnId).catch(() => undefined);
+      } else {
+        setErr(msg === "BACKEND_INVALID_JSON" ? "Backend returned invalid JSON. Restart backend + refresh the page." : msg);
+      }
     } finally {
       setBusy(false);
     }
@@ -133,7 +158,8 @@ export default function Home() {
       const r = await getNotifications(notificationsUserId.trim());
       setNotifications(r.items);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "UNKNOWN_ERROR");
+      const msg = e instanceof Error ? e.message : "UNKNOWN_ERROR";
+      setErr(msg === "BACKEND_INVALID_JSON" ? "Backend returned invalid JSON. Restart backend + refresh the page." : msg);
     } finally {
       setBusy(false);
     }

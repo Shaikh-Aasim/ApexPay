@@ -14,9 +14,10 @@ export async function issueOtp(args: { txnId: string; ttlSeconds: number }): Pro
 
 export async function verifyOtp(args: { txnId: string; otp: string; maxAttempts: number }): Promise<void> {
   const key = `otp:txn:${args.txnId}`;
-  const raw = await redis.get<string>(key);
+  const raw = await redis.get<unknown>(key);
   if (!raw) throw new Error("OTP_EXPIRED");
-  const parsed = JSON.parse(raw) as { hash?: string; attempts?: number };
+  const parsed =
+    typeof raw === "string" ? (JSON.parse(raw) as { hash?: string; attempts?: number }) : (raw as { hash?: string; attempts?: number });
   const attempts = Number(parsed.attempts ?? 0);
   if (attempts >= args.maxAttempts) throw new Error("OTP_LOCKED");
   const ok = parsed.hash === hashOtp(args.otp);
@@ -26,4 +27,3 @@ export async function verifyOtp(args: { txnId: string; otp: string; maxAttempts:
   }
   await redis.del(key);
 }
-

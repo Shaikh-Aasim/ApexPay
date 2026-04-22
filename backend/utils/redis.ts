@@ -17,13 +17,17 @@ export async function releaseLock(args: { key: string; value: string }): Promise
 }
 
 export async function getJson<T>(key: string): Promise<T | null> {
-  const raw = await redis.get<string>(key);
+  const raw = await redis.get<unknown>(key);
   if (!raw) return null;
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      return null;
+    }
   }
+  if (typeof raw === "object") return raw as T;
+  return null;
 }
 
 export async function setJson(key: string, value: unknown, ttlSeconds?: number): Promise<void> {

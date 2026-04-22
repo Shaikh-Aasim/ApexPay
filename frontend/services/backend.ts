@@ -52,18 +52,41 @@ function extractErrorMessage(data: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-async function http<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...init,
-    headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
-  });
-  const text = await res.text();
-  const data = text ? (JSON.parse(text) as unknown) : null;
-  if (!res.ok) {
-    const msg = extractErrorMessage(data) ?? `HTTP_${res.status}`;
-    throw new Error(msg);
+function safeJsonParse(text: string): unknown {
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
   }
-  return data as T;
+}
+
+async function http<T>(path: string, init?: RequestInit): Promise<T> {
+  try {
+    const headers: Record<string, string> = { ...(init?.headers as Record<string, string> | undefined) };
+    if (init?.body != null && headers["content-type"] == null) {
+      headers["content-type"] = "application/json";
+    }
+    if (headers.accept == null) headers.accept = "application/json";
+
+    const res = await fetch(`${BASE_URL}${path}`, { ...init, headers });
+    const text = await res.text();
+    const data = safeJsonParse(text);
+    if (!res.ok) {
+      const msg = extractErrorMessage(data) ?? (typeof data === "string" ? data : null) ?? `HTTP_${res.status}`;
+      throw new Error(msg);
+    }
+    if (typeof data === "string") {
+      throw new Error("BACKEND_INVALID_JSON");
+    }
+    return data as T;
+  } catch (e) {
+    if (e instanceof SyntaxError) {
+      throw new Error("BACKEND_INVALID_JSON");
+    }
+    if (e instanceof Error) throw e;
+    throw new Error("UNKNOWN_ERROR");
+  }
 }
 
 export function initiatePayment(body: InitiateRequest): Promise<InitiateResponse> {
