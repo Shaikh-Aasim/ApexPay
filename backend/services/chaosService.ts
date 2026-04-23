@@ -1,6 +1,6 @@
 import { redis } from "../utils/redis";
 
-export type CrashPoint = "NONE" | "BEFORE_DEBIT" | "AFTER_DEBIT";
+export type CrashPoint = "NONE" | "BEFORE_DEBIT" | "AFTER_DEBIT" | "BEFORE_CREDIT";
 
 export async function setDelayMs(args: { ms: number; ttlSeconds: number }): Promise<void> {
   await redis.set("chaos:delay_ms", String(args.ms), { ex: Math.max(1, args.ttlSeconds) });

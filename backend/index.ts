@@ -3,6 +3,7 @@ import express, { NextFunction, Request, Response } from "express";
 import helmet from "helmet";
 import { ZodError } from "zod";
 import { env } from "./config/env";
+import { accountRoutes } from "./routes/accountRoutes";
 import { notificationRoutes } from "./routes/notificationRoutes";
 import { paymentRoutes } from "./routes/paymentRoutes";
 import { testRoutes } from "./routes/testRoutes";
@@ -19,10 +20,12 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/payment", paymentRoutes);
+app.use("/account", accountRoutes);
 app.use("/notifications", notificationRoutes);
 app.use("/test", testRoutes);
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  console.error(err);
   if (err instanceof ZodError) {
     res.status(400).json({ error: "VALIDATION_ERROR", details: err.flatten() });
     return;

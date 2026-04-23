@@ -300,32 +300,52 @@ export async function processTransaction(args: { txnId: string; asRecovery: bool
     const delay = await getDelayMs();
     if (delay > 0) await sleep(delay);
 
-    await client.query("begin");
-
     const crash = await getCrashPoint();
 
-    const senderRow = await client.query(`select balance::float as balance from accounts where id = $1 for update`, [
-      s.sender_account_id,
-    ]);
+    // --- PHASE 1: DEBIT ---
+    // If not already debited in a previous failed attempt
+    if (s.failure_reason !== "SENDER_DEBITED") {
+      await client.query("begin");
+      
+      const senderRow = await client.query(`select balance::float as balance from accounts where id = $1 for update`, [
+        s.sender_account_id,
+      ]);
+      if (!senderRow.rows[0]) throw new Error("ACCOUNT_NOT_FOUND");
+      const senderBalance = Number(senderRow.rows[0].balance);
+      if (senderBalance < s.amount) throw new Error("INSUFFICIENT_FUNDS_DB");
+
+      if (crash === "BEFORE_DEBIT") throw new Error("SIMULATED_CRASH");
+
+      await client.query(`update accounts set balance = balance - $2 where id = $1`, [s.sender_account_id, s.amount]);
+      
+      // Update txn to mark debit done
+      await client.query(
+        `update transactions set failure_reason = 'SENDER_DEBITED', updated_at = now() where id = $1`,
+        [s.id]
+      );
+      
+      await client.query("commit");
+      
+      await auditLog({ txnId: s.id, actorUserId: s.sender_user_id, action: "SENDER_DEBIT_SUCCESS" });
+      await notifyUser({ userId: s.sender_user_id, type: "PAYMENT_DEBITED", message: `₹${s.amount} debited from your account` });
+    }
+
+    // Simulate crash AFTER_DEBIT or BEFORE_CREDIT
+    if (crash === "AFTER_DEBIT" || crash === "BEFORE_CREDIT") throw new Error("SIMULATED_CRASH");
+
+    // --- PHASE 2: CREDIT ---
+    await client.query("begin");
+    
     const receiverRow = await client.query(`select balance::float as balance from accounts where id = $1 for update`, [
       s.receiver_account_id,
     ]);
-    if (!senderRow.rows[0] || !receiverRow.rows[0]) throw new Error("ACCOUNT_NOT_FOUND");
-
-    const senderBalance = Number(senderRow.rows[0].balance);
-    if (senderBalance < s.amount) throw new Error("INSUFFICIENT_FUNDS_DB");
-
-    if (crash === "BEFORE_DEBIT") throw new Error("SIMULATED_CRASH");
-
-    await client.query(`update accounts set balance = balance - $2 where id = $1`, [s.sender_account_id, s.amount]);
-
-    if (crash === "AFTER_DEBIT") throw new Error("SIMULATED_CRASH");
+    if (!receiverRow.rows[0]) throw new Error("RECEIVER_ACCOUNT_NOT_FOUND");
 
     await client.query(`update accounts set balance = balance + $2 where id = $1`, [s.receiver_account_id, s.amount]);
 
     await client.query(
       `update transactions
-       set status = $2, completed_at = now(), updated_at = now()
+       set status = $2, completed_at = now(), updated_at = now(), failure_reason = null
        where id = $1`,
       [s.id, args.asRecovery ? "RECOVERED" : "COMPLETED"]
     );
@@ -340,7 +360,7 @@ export async function processTransaction(args: { txnId: string; asRecovery: bool
     });
     await Promise.all([
       notifyUser({ userId: s.sender_user_id, type: "PAYMENT_STATUS", message: `Payment ${args.asRecovery ? "recovered" : "completed"}: ₹${s.amount}` }),
-      notifyUser({ userId: s.receiver_user_id, type: "PAYMENT_RECEIVED", message: `Received ₹${s.amount}` }),
+      notifyUser({ userId: s.receiver_user_id, type: "PAYMENT_RECEIVED", message: `Received ₹${s.amount} from User ${s.sender_user_id.slice(0, 4)}` }),
     ]);
   } catch (e) {
     try {
@@ -348,15 +368,63 @@ export async function processTransaction(args: { txnId: string; asRecovery: bool
     } catch {
     }
     const msg = e instanceof Error ? e.message : "UNKNOWN_ERROR";
+    
+    // Increment retries but KEEP status as APPROVED so worker picks it up
     await pool.query(
-      `update transactions set status = 'FAILED', failure_reason = $2, retries = retries + 1, updated_at = now() where id = $1`,
-      [s.id, msg]
+      `update transactions set retries = retries + 1, updated_at = now() where id = $1`,
+      [s.id]
     );
-    await auditLog({ txnId: s.id, actorUserId: s.sender_user_id, action: "PAYMENT_FAILED", payload: { error: msg } });
+
+    await auditLog({ txnId: s.id, actorUserId: s.sender_user_id, action: "PAYMENT_FAILED_ATTEMPT", payload: { error: msg, attempt: s.retries + 1 } });
     throw e;
   } finally {
     client.release();
     await releaseLock({ key: lockKey, value: lockValue });
+  }
+}
+
+export async function rollbackTransaction(args: { txnId: string }): Promise<void> {
+  const s = await getPaymentStatus(args.txnId);
+  if (s.status !== "APPROVED") throw new Error("CANNOT_ROLLBACK_NON_APPROVED");
+
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+
+    // Ensure we don't rollback multiple times
+    const check = await client.query(`select status from transactions where id = $1 for update`, [s.id]);
+    if (check.rows[0].status !== "APPROVED") {
+      await client.query("rollback");
+      return;
+    }
+
+    // 1. Credit back sender IF they were debited
+    if (s.failure_reason === "SENDER_DEBITED") {
+      await client.query(`update accounts set balance = balance + $2 where id = $1`, [s.sender_account_id, s.amount]);
+    }
+
+    // 2. Mark txn as FAILED
+    await client.query(
+      `update transactions 
+       set status = 'FAILED', failure_reason = 'ROLLBACK_AFTER_MAX_RETRIES', updated_at = now() 
+       where id = $1`,
+      [s.id]
+    );
+
+    await client.query("commit");
+
+    await releaseReservedFunds({ accountId: s.sender_account_id, amount: s.amount });
+    await auditLog({ txnId: s.id, actorUserId: s.sender_user_id, action: "PAYMENT_ROLLED_BACK" });
+    await notifyUser({ 
+      userId: s.sender_user_id, 
+      type: "PAYMENT_REFUNDED", 
+      message: `Transaction failed. ₹${s.amount} refunded to your account` 
+    });
+  } catch (e) {
+    await client.query("rollback");
+    throw e;
+  } finally {
+    client.release();
   }
 }
 
@@ -383,20 +451,28 @@ export async function expireHolds(): Promise<number> {
 
 export async function recoverStuckApproved(): Promise<number> {
   const r = await pool.query(
-    `select id::text as id
+    `select id::text as id, retries
      from transactions
      where status = 'APPROVED'
-       and updated_at < now() - interval '10 seconds'
-       and retries < 3
+       and updated_at < now() - interval '5 seconds'
      order by updated_at asc
      limit 25`
   );
-  const ids = r.rows.map((x: any) => String(x.id));
-  for (const id of ids) {
+  const rows = r.rows;
+  for (const row of rows) {
+    const id = String(row.id);
+    const retries = Number(row.retries);
     try {
-      await processTransaction({ txnId: id, asRecovery: true });
-    } catch {
+      if (retries >= 3) {
+        console.log(`Max retries reached for ${id}, rolling back...`);
+        await rollbackTransaction({ txnId: id });
+      } else {
+        console.log(`Retrying settlement for ${id}, attempt ${retries + 1}`);
+        await processTransaction({ txnId: id, asRecovery: true });
+      }
+    } catch (e) {
+      console.error(`Recovery failed for ${id}:`, e);
     }
   }
-  return ids.length;
+  return rows.length;
 }

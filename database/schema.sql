@@ -170,7 +170,8 @@ on conflict (name) do nothing;
 insert into users(id, full_name, phone)
 values
   ('11111111-1111-1111-1111-111111111111', 'Aarav Sender', '9000000001'),
-  ('22222222-2222-2222-2222-222222222222', 'Isha Receiver', '9000000002')
+  ('22222222-2222-2222-2222-222222222222', 'Isha Receiver', '9000000002'),
+  ('33333333-3333-3333-3333-333333333333', 'Rahul Tester', '9000000003')
 on conflict (id) do nothing;
 
 insert into accounts(id, user_id, bank_id, balance)
@@ -193,6 +194,16 @@ from banks b
 where b.name = 'Neo Bank'
 on conflict (id) do nothing;
 
+insert into accounts(id, user_id, bank_id, balance)
+select
+  'cccccccc-cccc-cccc-cccc-cccccccccccc'::uuid,
+  '33333333-3333-3333-3333-333333333333'::uuid,
+  b.id,
+  5000000.00
+from banks b
+where b.name = 'Apex Bank'
+on conflict (id) do nothing;
+
 insert into vpas(user_id, bank_id, account_id, vpa)
 select
   '11111111-1111-1111-1111-111111111111'::uuid,
@@ -211,6 +222,16 @@ select
   'isha@neo'
 from banks b
 where b.name = 'Neo Bank'
+on conflict (vpa) do nothing;
+
+insert into vpas(user_id, bank_id, account_id, vpa)
+select
+  '33333333-3333-3333-3333-333333333333'::uuid,
+  b.id,
+  'cccccccc-cccc-cccc-cccc-cccccccccccc'::uuid,
+  'rahul@apex'
+from banks b
+where b.name = 'Apex Bank'
 on conflict (vpa) do nothing;
 
 insert into receiver_profiles(receiver_user_id, suspicion_score, flagged)

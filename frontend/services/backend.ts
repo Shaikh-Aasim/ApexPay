@@ -43,6 +43,12 @@ export type NotificationsResponse = {
   items: Array<{ id: string; type: string; message: string; created_at: string }>;
 };
 
+export type BalanceResponse = {
+  success: boolean;
+  vpa: string;
+  balance: number;
+};
+
 const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000";
 
 function extractErrorMessage(data: unknown): string | null {
@@ -101,10 +107,18 @@ export function cancelPayment(body: { txnId: string; actorUserId?: string }): Pr
   return http<TxStatusResponse>("/payment/cancel", { method: "POST", body: JSON.stringify(body) });
 }
 
+export function getBalance(vpa: string): Promise<BalanceResponse> {
+  return http<BalanceResponse>(`/account/balance?vpa=${encodeURIComponent(vpa)}`);
+}
+
 export function getPaymentStatus(txnId: string): Promise<TxStatusResponse> {
   return http<TxStatusResponse>(`/payment/status?id=${encodeURIComponent(txnId)}`);
 }
 
 export function getNotifications(userId: string): Promise<NotificationsResponse> {
   return http<NotificationsResponse>(`/notifications?userId=${encodeURIComponent(userId)}`);
+}
+
+export function simulateSettlementFailure(txnId: string, mode: "AFTER_DEBIT" | "BEFORE_CREDIT"): Promise<{ ok: boolean }> {
+  return http<{ ok: boolean }>("/test/settlement-failure", { method: "POST", body: JSON.stringify({ txnId, mode }) });
 }

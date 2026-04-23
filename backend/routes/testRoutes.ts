@@ -5,4 +5,5 @@ export const testRoutes = Router();
 
 testRoutes.post("/delay", testController.delay);
 testRoutes.post("/crash", testController.crash);
+testRoutes.post("/settlement-failure", testController.simulateSettlementFailure);
 
