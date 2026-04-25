@@ -9,3 +9,74 @@ npm run dev
 3. cd frontend
 npm install
 npm run dev
+
+
+
+
+Flow :-
+
+### 1. Registration Flow
+The registration process is a multi-step verification to ensure the user exists in the "Bank Registry" before allowing them to create an ApexPay account.
+
+Data Flow & Control Flow:
+
+1. Initiate ( POST /api/auth/register/initiate ) :
+   - Input : mobileNumber , firstName , lastName .
+   - Logic :
+     - Queries the bank_accounts table in the database to see if the mobile number is linked to any bank.
+     - If found, it generates a 6-digit OTP via issueMobileOtp .
+     - Data Store : The OTP is stored in Redis with a TTL (Time-To-Live).
+   - Output : Returns otpDebug (for simulation) and a list of availableBanks .
+2. Verify OTP ( POST /api/auth/register/verify-otp ) :
+   - Input : mobileNumber , otp .
+   - Logic : Checks the provided OTP against the one in Redis .
+   - Data Store : If valid, a "verified" flag is stored in Redis for that mobile number.
+3. Set PIN & Complete ( POST /api/auth/register/set-pin ) :
+   - Input : mobileNumber , firstName , lastName , pin , bankAccountId .
+   - Logic :
+     - Verifies the "verified" flag in Redis .
+     - Hashes the PIN using bcrypt .
+     - Database Operations (Wrapped in a Transaction):
+       - users table : Stores user details and pin_hash .
+       - accounts table : Links the user to their selected bank and initial balance.
+       - vpas table : Generates a default VPA (e.g., name1234@apex ).
+   - Cleanup : Deletes the verification flag from Redis .
+### 2. Login Flow
+Login ensures security by requiring both a temporary OTP and a permanent secure PIN.
+
+Data Flow & Control Flow:
+
+1. Initiate ( POST /api/auth/login/initiate ) :
+   - Logic : Checks if the mobile_number exists in the users table.
+   - Data Store : Generates and stores a login OTP in Redis .
+2. Verify OTP ( POST /api/auth/login/verify-otp ) :
+   - Logic : Verifies the OTP from Redis .
+   - Data Store : Sets a login:otp_verified flag in Redis (valid for 5 minutes).
+3. Verify PIN & Login ( POST /api/auth/login/verify-pin ) :
+   - Input : mobile , pin .
+   - Logic :
+     - Checks the login:otp_verified flag in Redis .
+     - Fetches pin_hash from the users table and compares it using bcrypt.compare .
+   - Authentication : Generates a JWT Token containing userId and mobile .
+   - Output : Returns the JWT and user profile (including their VPA).
+### 3. Bank Simulation Flow
+The "Bank Page" simulates a Central Bank Registry where users can "create" bank accounts before registering for ApexPay.
+
+Data Flow & Control Flow:
+
+1. Create Bank Account ( POST /api/bank/accounts ) :
+   - Input : Name, Aadhar, Mobile, Account Number, Bank ID, IFSC, and initial Balance.
+   - Control : Handled by bankController.ts .
+   - Data Store :
+     - bank_accounts table : This is the "source of truth" for the simulation.
+     - This data is used later by the authService.ts during registration to "verify" that the user actually has a bank account.
+2. Get Bank List ( GET /api/bank/list ) :
+   - Logic : Fetches available banks from the banks table (e.g., "Apex Bank", "Neo Bank").
+### Summary of Data Storage
+Data Type Storage Location Purpose User Profile & PIN users table (PostgreSQL) Permanent storage of account details. OTP & Temp Flags Redis Ephemeral data for 2-factor verification. Bank Records bank_accounts table (PostgreSQL) Simulated "External" bank data for verification. Session/Auth JWT (JSON Web Token) Stateless authentication for API requests. VPA Mapping vpas table (PostgreSQL) Links a unique address (e.g., aarav@apex ) to a user and bank account.
+
+Key Files for Reference:
+
+- Auth Logic : authService.ts
+- Bank Logic : bankService.ts
+- Database Schema : schema.sql sql)
