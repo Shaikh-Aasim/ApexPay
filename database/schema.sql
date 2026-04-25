@@ -32,8 +32,19 @@ create table if not exists banks (
 
 create table if not exists users (
   id uuid primary key default gen_random_uuid(),
-  full_name text not null,
-  phone text,
+  first_name text not null,
+  last_name text not null,
+  mobile_number text not null unique,
+  pin_hash text,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists bank_accounts (
+  id uuid primary key default gen_random_uuid(),
+  mobile_number text not null,
+  account_number text not null unique,
+  bank_id uuid not null references banks(id),
+  balance numeric(14,2) not null check (balance >= 0),
   created_at timestamptz not null default now()
 );
 
@@ -46,6 +57,19 @@ create table if not exists accounts (
   created_at timestamptz not null default now(),
   unique (user_id, bank_id)
 );
+
+-- Seed data for simulated Bank Registry
+insert into banks(name)
+values ('Apex Bank'), ('Neo Bank')
+on conflict (name) do nothing;
+
+insert into bank_accounts(mobile_number, account_number, bank_id, balance)
+select '9000000001', 'ACT-111111', id, 250000.00 from banks where name = 'Apex Bank'
+on conflict (account_number) do nothing;
+
+insert into bank_accounts(mobile_number, account_number, bank_id, balance)
+select '9000000002', 'ACT-222222', id, 10000.00 from banks where name = 'Neo Bank'
+on conflict (account_number) do nothing;
 
 create table if not exists vpas (
   id uuid primary key default gen_random_uuid(),
@@ -167,11 +191,11 @@ insert into banks(name)
 values ('Apex Bank'), ('Neo Bank')
 on conflict (name) do nothing;
 
-insert into users(id, full_name, phone)
+insert into users(id, first_name, last_name, mobile_number)
 values
-  ('11111111-1111-1111-1111-111111111111', 'Aarav Sender', '9000000001'),
-  ('22222222-2222-2222-2222-222222222222', 'Isha Receiver', '9000000002'),
-  ('33333333-3333-3333-3333-333333333333', 'Rahul Tester', '9000000003')
+  ('11111111-1111-1111-1111-111111111111', 'Aarav', 'Sender', '9000000001'),
+  ('22222222-2222-2222-2222-222222222222', 'Isha', 'Receiver', '9000000002'),
+  ('33333333-3333-3333-3333-333333333333', 'Rahul', 'Tester', '9000000003')
 on conflict (id) do nothing;
 
 insert into accounts(id, user_id, bank_id, balance)

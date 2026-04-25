@@ -4,10 +4,13 @@ import helmet from "helmet";
 import { ZodError } from "zod";
 import { env } from "./config/env";
 import { accountRoutes } from "./routes/accountRoutes";
+import authRoutes from "./routes/authRoutes";
+import bankRoutes from "./routes/bankRoutes";
 import { notificationRoutes } from "./routes/notificationRoutes";
 import { paymentRoutes } from "./routes/paymentRoutes";
 import { testRoutes } from "./routes/testRoutes";
 import { expireHolds, recoverStuckApproved } from "./services/paymentService";
+import { runMigrations } from "./utils/migrate";
 
 const app = express();
 
@@ -19,6 +22,8 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
 
+app.use("/api/auth", authRoutes);
+app.use("/api/bank", bankRoutes);
 app.use("/payment", paymentRoutes);
 app.use("/account", accountRoutes);
 app.use("/notifications", notificationRoutes);
@@ -34,8 +39,14 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   res.status(500).json({ error: msg });
 });
 
-app.listen(env.PORT, () => {
-});
+async function startServer() {
+  await runMigrations();
+  app.listen(env.PORT, () => {
+    console.log(`Server running on port ${env.PORT}`);
+  });
+}
+
+startServer();
 
 const HOLD_SWEEP_MS = 5_000;
 const RECOVERY_SWEEP_MS = 5_000;

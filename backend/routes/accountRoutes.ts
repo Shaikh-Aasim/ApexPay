@@ -1,6 +1,8 @@
 import { Router } from "express";
-import { getBalance } from "../controllers/accountController";
+import { getBalance, resolveReceiver } from "../controllers/accountController";
+import { authMiddleware } from "../middleware/authMiddleware";
 
 export const accountRoutes = Router();
 
-accountRoutes.get("/balance", getBalance);
+accountRoutes.get("/balance", authMiddleware as any, getBalance);
+accountRoutes.get("/resolve", authMiddleware as any, resolveReceiver);

@@ -1,3 +1,4 @@
+import bcrypt from "bcrypt";
 import crypto from "crypto";
 import { env } from "../config/env";
 import { pool } from "../utils/db";
@@ -35,14 +36,65 @@ async function resolveVpa(vpa: string): Promise<{ userId: string; accountId: str
   return { userId: String(r.rows[0].user_id), accountId: String(r.rows[0].account_id), balance: Number(r.rows[0].balance) };
 }
 
+async function resolveUser(userId: string): Promise<{ userId: string; accountId: string; balance: number; vpa: string }> {
+  const r = await pool.query(
+    `select v.vpa, v.user_id::text as user_id, v.account_id::text as account_id, a.balance::float as balance
+     from vpas v
+     join accounts a on a.id = v.account_id
+     where v.user_id = $1
+     order by a.balance desc
+     limit 1`,
+    [userId]
+  );
+  if (!r.rows[0]) throw new Error("USER_ACCOUNT_NOT_FOUND");
+  return { 
+    userId: String(r.rows[0].user_id), 
+    accountId: String(r.rows[0].account_id), 
+    balance: Number(r.rows[0].balance),
+    vpa: String(r.rows[0].vpa)
+  };
+}
+
+async function resolveMobile(mobile: string): Promise<{ userId: string; accountId: string; balance: number; vpa: string }> {
+  const r = await pool.query(
+    `select v.vpa, v.user_id::text as user_id, v.account_id::text as account_id, a.balance::float as balance
+     from users u
+     join vpas v on v.user_id = u.id
+     join accounts a on a.id = v.account_id
+     where u.mobile_number = $1
+     order by a.balance desc
+     limit 1`,
+    [mobile]
+  );
+  if (!r.rows[0]) throw new Error("MOBILE_NOT_FOUND_IN_APEXPAY");
+  return { 
+    userId: String(r.rows[0].user_id), 
+    accountId: String(r.rows[0].account_id), 
+    balance: Number(r.rows[0].balance),
+    vpa: String(r.rows[0].vpa)
+  };
+}
+
 export async function initiatePayment(args: {
   idempotencyKey?: string;
-  senderVpa: string;
-  receiverVpa: string;
+  senderVpa?: string;
+  senderUserId?: string;
+  receiverVpa?: string;
+  receiverMobile?: string;
   amount: number;
   deviceId: string;
   location: string;
+  pin?: string;
 }): Promise<{ txnId: string; status: TxStatus; decision: RiskDecision; riskScore: number; reasons: string[]; fraudType: string; holdExpiresAt?: string; otpRequired: boolean; otpDebug?: string }> {
+  // Verify PIN if provided
+  if (args.pin && args.senderUserId) {
+    const userRes = await pool.query("select pin_hash from users where id = $1", [args.senderUserId]);
+    if (userRes.rows[0]) {
+      const pinOk = await bcrypt.compare(args.pin, userRes.rows[0].pin_hash);
+      if (!pinOk) throw new Error("INVALID_PIN");
+    }
+  }
+
   if (args.idempotencyKey) {
     const existing = await pool.query(`select id::text as id from transactions where idempotency_key = $1`, [args.idempotencyKey]);
     if (existing.rows[0]) {
@@ -60,8 +112,13 @@ export async function initiatePayment(args: {
     }
   }
 
-  const sender = await resolveVpa(args.senderVpa);
-  const receiver = await resolveVpa(args.receiverVpa);
+  const [sender, receiver] = await Promise.all([
+    args.senderUserId ? resolveUser(args.senderUserId) : resolveVpa(args.senderVpa!),
+    args.receiverVpa ? resolveVpa(args.receiverVpa) : resolveMobile(args.receiverMobile!),
+  ]);
+
+  const finalSenderVpa = args.senderUserId ? (sender as any).vpa : args.senderVpa!;
+  const finalReceiverVpa = args.receiverVpa || (receiver as any).vpa;
   if (sender.accountId === receiver.accountId) throw new Error("SAME_ACCOUNT");
 
   const [txnCount24h, stats30d, deviceChange, locationAnomaly, receiverRisk] = await Promise.all([
@@ -130,10 +187,10 @@ export async function initiatePayment(args: {
       args.idempotencyKey ?? null,
       sender.userId,
       sender.accountId,
-      args.senderVpa,
+      finalSenderVpa,
       receiver.userId,
       receiver.accountId,
-      args.receiverVpa,
+      finalReceiverVpa,
       args.amount,
       status,
       ml.risk_score,
@@ -159,7 +216,7 @@ export async function initiatePayment(args: {
     txnId,
     actorUserId: sender.userId,
     action: "PAYMENT_INITIATED",
-    payload: { senderVpa: args.senderVpa, receiverVpa: args.receiverVpa, amount: args.amount, decision, risk_score: ml.risk_score },
+    payload: { senderVpa: finalSenderVpa, receiverVpa: finalReceiverVpa, amount: args.amount, decision, risk_score: ml.risk_score },
   });
 
   await updateBehaviorAnchors({ userId: sender.userId, deviceId: args.deviceId, location: args.location });
