@@ -66,6 +66,10 @@ export async function runMigrations() {
         if not exists (select 1 from information_schema.columns where table_name='bank_accounts' and column_name='first_name') then
           alter table bank_accounts add column first_name text, add column last_name text, add column aadhar_number text, add column ifsc_code text;
         end if;
+
+        if not exists (select 1 from information_schema.columns where table_name='transactions' and column_name='payment_note') then
+          alter table transactions add column payment_note text;
+        end if;
       end $$;
     `);
 

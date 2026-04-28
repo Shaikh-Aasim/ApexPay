@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { z } from "zod";
 import { AuthRequest } from "../middleware/authMiddleware";
-import { cancelPayment, confirmPayment, getPaymentStatus, initiatePayment } from "../services/paymentService";
+import { cancelPayment, confirmPayment, getPaymentStatus, getTransactionHistory, initiatePayment } from "../services/paymentService";
 
 const initiateSchema = z.object({
   idempotencyKey: z.string().optional(),
@@ -12,6 +12,7 @@ const initiateSchema = z.object({
   deviceId: z.string().min(1),
   location: z.string().min(1),
   pin: z.string().optional(),
+  paymentNote: z.string().optional(),
 }).refine(data => data.receiverVpa || data.receiverMobile, {
   message: "Either receiverVpa or receiverMobile must be provided",
   path: ["receiverVpa"]
@@ -56,5 +57,15 @@ export async function status(req: Request, res: Response): Promise<void> {
   const txnId = z.string().min(1).parse(req.query.id);
   const s = await getPaymentStatus(txnId);
   res.json(s);
+}
+
+export async function history(req: AuthRequest, res: Response): Promise<void> {
+  const userId = req.user?.userId;
+  if (!userId) {
+    res.status(401).json({ error: "UNAUTHORIZED" });
+    return;
+  }
+  const items = await getTransactionHistory(userId);
+  res.json({ items });
 }
 

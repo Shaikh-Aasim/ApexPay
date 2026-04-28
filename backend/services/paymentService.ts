@@ -85,6 +85,7 @@ export async function initiatePayment(args: {
   deviceId: string;
   location: string;
   pin?: string;
+  paymentNote?: string;
 }): Promise<{ txnId: string; status: TxStatus; decision: RiskDecision; riskScore: number; reasons: string[]; fraudType: string; holdExpiresAt?: string; otpRequired: boolean; otpDebug?: string }> {
   // Verify PIN if provided
   if (args.pin && args.senderUserId) {
@@ -172,7 +173,7 @@ export async function initiatePayment(args: {
         amount, status,
         risk_score, decision, decision_reason, fraud_type, model_version, risk_features,
         otp_required, hold_expires_at,
-        failure_reason
+        failure_reason, payment_note
      ) values (
         $1,
         $2, $3, $4,
@@ -180,7 +181,7 @@ export async function initiatePayment(args: {
         $8, $9,
         $10, $11, $12, $13, $14, $15::jsonb,
         $16, $17,
-        $18
+        $18, $19
      )
      returning id::text as id`,
     [
@@ -202,6 +203,7 @@ export async function initiatePayment(args: {
       otpRequired,
       holdExpiresAt,
       failureReason,
+      args.paymentNote ?? null,
     ]
   );
   const txnId = String(created.rows[0].id);
@@ -341,6 +343,75 @@ export async function getPaymentStatus(txnId: string): Promise<{
     failure_reason: row.failure_reason ? String(row.failure_reason) : null,
     retries: Number(row.retries ?? 0),
   };
+}
+
+export async function getTransactionHistory(userId: string) {
+  const r = await pool.query(
+    `select
+        t.id::text,
+        t.amount::float as amount,
+        t.status::text,
+        t.sender_user_id::text,
+        t.sender_vpa,
+        t.receiver_user_id::text,
+        t.receiver_vpa,
+        t.payment_note,
+        t.created_at::text,
+        
+        -- Sender Info
+        us.first_name || ' ' || us.last_name as sender_name,
+        bas.account_number as sender_account_number,
+        bs.name as sender_bank_name,
+        
+        -- Receiver Info
+        ur.first_name || ' ' || ur.last_name as receiver_name,
+        bar.account_number as receiver_account_number,
+        br.name as receiver_bank_name
+        
+     from transactions t
+     join users us on us.id = t.sender_user_id
+     join accounts as_ on as_.id = t.sender_account_id
+     join bank_accounts bas on bas.mobile_number = us.mobile_number and bas.bank_id = as_.bank_id
+     join banks bs on bs.id = as_.bank_id
+     
+     join users ur on ur.id = t.receiver_user_id
+     join accounts ar on ar.id = t.receiver_account_id
+     join bank_accounts bar on bar.mobile_number = ur.mobile_number and bar.bank_id = ar.bank_id
+     join banks br on br.id = ar.bank_id
+     
+     where t.sender_user_id = $1 or t.receiver_user_id = $1
+     order by t.created_at desc`,
+    [userId]
+  );
+
+  return r.rows.map((row: any) => {
+    const isSender = row.sender_user_id === userId;
+    return {
+      id: row.id,
+      amount: row.amount,
+      status: row.status,
+      timestamp: row.created_at,
+      paymentNote: row.payment_note,
+      type: isSender ? "DEBIT" : "CREDIT",
+      
+      // Counterparty info
+      name: isSender ? row.receiver_name : row.sender_name,
+      vpa: isSender ? row.receiver_vpa : row.sender_vpa,
+      accountNumber: isSender ? row.receiver_account_number : row.sender_account_number,
+      bankName: isSender ? row.receiver_bank_name : row.sender_bank_name,
+      
+      // Full details for receipt
+      senderName: row.sender_name,
+      senderVpa: row.sender_vpa,
+      senderAccountNumber: row.sender_account_number,
+      senderBankName: row.sender_bank_name,
+      
+      receiverName: row.receiver_name,
+      receiverVpa: row.receiver_vpa,
+      receiverAccountNumber: row.receiver_account_number,
+      receiverBankName: row.receiver_bank_name
+    };
+  });
 }
 
 export async function processTransaction(args: { txnId: string; asRecovery: boolean }): Promise<void> {

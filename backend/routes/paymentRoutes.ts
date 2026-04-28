@@ -8,5 +8,6 @@ export const paymentRoutes = Router();
 paymentRoutes.post("/initiate", authMiddleware as any, paymentController.initiate);
 paymentRoutes.post("/confirm", authMiddleware as any, paymentController.confirm);
 paymentRoutes.post("/cancel", authMiddleware as any, paymentController.cancel);
+paymentRoutes.get("/history", authMiddleware as any, paymentController.history);
 paymentRoutes.get("/status", paymentController.status); // Status might be public for tracking
 

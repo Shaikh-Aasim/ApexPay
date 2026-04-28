@@ -116,6 +116,7 @@ create table if not exists transactions (
 
   failure_reason text,
   retries int not null default 0,
+  payment_note text,
 
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

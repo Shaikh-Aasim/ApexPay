@@ -6,6 +6,7 @@ import {
   confirmPayment,
   getNotifications,
   getPaymentStatus,
+  getTransactionHistory,
   initiatePayment,
   loginInitiate,
   loginVerifyOtp,
@@ -17,6 +18,7 @@ import {
   simulateSettlementFailure,
   type AuthUser,
   type InitiateResponse,
+  type TransactionHistoryItem,
   type TxStatusResponse,
 } from "../services/backend";
 
@@ -57,9 +59,16 @@ export default function Home() {
   const [notificationsUserId, setNotificationsUserId] = useState("");
   const [notifications, setNotifications] = useState<Array<{ id: string; type: string; message: string; created_at: string }>>([]);
   const [chaosMode, setChaosMode] = useState<"NONE" | "AFTER_DEBIT" | "BEFORE_CREDIT">("NONE");
-  const [activeTab, setActiveTab] = useState<"VPA" | "MOBILE" | "BALANCE">("VPA");
+  const [activeTab, setActiveTab] = useState<"VPA" | "MOBILE" | "BALANCE" | "HISTORY">("VPA");
   const [paymentFlowStep, setPaymentFlowStep] = useState<"INPUT" | "CONFIRM_RECEIVER" | "ENTER_PIN" | "FINAL_CONFIRM">("INPUT");
   const [resolvedReceiver, setResolvedReceiver] = useState<{ name: string; vpa: string } | null>(null);
+
+  // Transaction History State
+  const [history, setHistory] = useState<TransactionHistoryItem[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedTxn, setSelectedTxn] = useState<TransactionHistoryItem | null>(null);
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [paymentNote, setPaymentNote] = useState("");
 
   const txnId = init?.txnId ?? status?.id ?? null;
 
@@ -162,6 +171,7 @@ export default function Home() {
         deviceId: deviceId.trim(),
         location: location.trim(),
         pin: pin.trim(),
+        paymentNote: paymentNote.trim() || undefined,
       });
       setInit(r);
       if (r.status !== "HOLD") {
@@ -242,6 +252,31 @@ export default function Home() {
       setBusy(false);
     }
   }
+
+  async function onLoadHistory() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await getTransactionHistory();
+      setHistory(r.items);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "UNKNOWN_ERROR";
+      setErr(msg === "BACKEND_INVALID_JSON" ? "Backend returned invalid JSON. Restart backend + refresh the page." : msg);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const filteredHistory = useMemo(() => {
+    if (!searchQuery.trim()) return history;
+    const q = searchQuery.toLowerCase().trim();
+    return history.filter(item => 
+      item.name.toLowerCase().includes(q) ||
+      item.vpa.toLowerCase().includes(q) ||
+      item.amount.toString().includes(q) ||
+      item.id.toLowerCase().includes(q)
+    );
+  }, [history, searchQuery]);
 
   function onReset() {
     setInit(null);
@@ -555,7 +590,7 @@ export default function Home() {
             </div>
             
             <button
-              onClick={() => setActiveTab("BALANCE")}
+              onClick={() => { setActiveTab("BALANCE"); }}
               className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl text-sm font-bold transition-all duration-200 group ${
                 activeTab === "BALANCE" 
                   ? "bg-blue-600 text-white shadow-xl shadow-blue-100 translate-x-1" 
@@ -564,6 +599,18 @@ export default function Home() {
             >
               <span className={`text-lg transition-transform duration-200 ${activeTab === "BALANCE" ? "scale-110" : "group-hover:scale-110"}`}>💰</span>
               Check Balance
+            </button>
+
+            <button
+              onClick={() => { setActiveTab("HISTORY"); onLoadHistory(); }}
+              className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl text-sm font-bold transition-all duration-200 group ${
+                activeTab === "HISTORY" 
+                  ? "bg-blue-600 text-white shadow-xl shadow-blue-100 translate-x-1" 
+                  : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
+              }`}
+            >
+              <span className={`text-lg transition-transform duration-200 ${activeTab === "HISTORY" ? "scale-110" : "group-hover:scale-110"}`}>📜</span>
+              Transaction History
             </button>
           </nav>
 
@@ -622,6 +669,85 @@ export default function Home() {
               <div className="lg:col-span-7 space-y-6">
                 {activeTab === "BALANCE" ? (
                   <CheckBalance />
+                ) : activeTab === "HISTORY" ? (
+                  <div className="space-y-6">
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Search by Name, Amount, VPA or ID..."
+                        className="h-14 w-full rounded-2xl border border-zinc-200 pl-12 pr-5 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all placeholder:text-zinc-300 shadow-sm bg-white"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                      />
+                      <span className="absolute left-5 top-1/2 -translate-y-1/2 text-zinc-400">🔍</span>
+                    </div>
+
+                    <div className="space-y-4">
+                      {filteredHistory.length > 0 ? (
+                        filteredHistory.map((txn) => (
+                          <div
+                            key={txn.id}
+                            onClick={() => {
+                              setSelectedTxn(txn);
+                              setIsDetailModalOpen(true);
+                            }}
+                            className="group relative overflow-hidden rounded-3xl border border-zinc-100 bg-white p-5 shadow-sm hover:shadow-md hover:border-blue-100 transition-all cursor-pointer active:scale-[0.99]"
+                          >
+                            <div className="flex items-center justify-between gap-4">
+                              <div className="flex items-center gap-4">
+                                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-lg font-black shadow-inner ${
+                                  txn.type === "CREDIT" ? "bg-emerald-50 text-emerald-600" : "bg-red-50 text-red-600"
+                                }`}>
+                                  {txn.type === "CREDIT" ? "+" : "-"}
+                                </div>
+                                <div className="min-w-0">
+                                  <h4 className="font-black text-zinc-900 truncate">
+                                    {txn.type === "CREDIT" ? "From " : "To "} {txn.name}
+                                  </h4>
+                                  <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest truncate">
+                                    {new Date(txn.timestamp).toLocaleString("en-IN", { 
+                                      day: "numeric", 
+                                      month: "short", 
+                                      year: "numeric", 
+                                      hour: "2-digit", 
+                                      minute: "2-digit" 
+                                    })}
+                                  </p>
+                                  {txn.paymentNote && (
+                                    <p className="text-[10px] font-medium text-zinc-500 mt-1 truncate italic">
+                                      "{txn.paymentNote}"
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <p className={`text-lg font-black tracking-tight ${
+                                  txn.type === "CREDIT" ? "text-emerald-600" : "text-zinc-900"
+                                }`}>
+                                  {txn.type === "CREDIT" ? "+" : "-"} ₹{txn.amount.toLocaleString("en-IN")}
+                                </p>
+                                <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${
+                                  txn.status === "COMPLETED" ? "bg-emerald-50 text-emerald-600" :
+                                  txn.status === "FAILED" ? "bg-red-50 text-red-600" :
+                                  "bg-amber-50 text-amber-600"
+                                }`}>
+                                  {txn.status}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="absolute top-0 right-0 p-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <span className="text-blue-500 text-xs">➔</span>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="py-20 text-center rounded-3xl border border-dashed border-zinc-200 bg-zinc-50">
+                          <span className="text-4xl block mb-4">🏜️</span>
+                          <p className="text-sm font-black text-zinc-400 uppercase tracking-widest">No transactions found</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 ) : (
                   <div className="rounded-3xl border border-zinc-200 bg-white p-8 shadow-sm">
                     <div className="flex items-center justify-between mb-8">
@@ -713,6 +839,16 @@ export default function Home() {
                                   <button onClick={() => setAmount("5000")} className="px-2 py-1 rounded bg-zinc-50 text-[10px] font-black text-zinc-500 hover:bg-zinc-100 transition-colors">5K</button>
                                 </div>
                               </div>
+                            </div>
+
+                            <div className="grid gap-2">
+                              <span className="text-[10px] font-black text-zinc-700 uppercase tracking-widest ml-1">Payment Note (Optional)</span>
+                              <input
+                                placeholder="What is this for?"
+                                className="h-14 w-full rounded-2xl border border-zinc-200 px-5 text-sm font-bold outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 transition-all placeholder:text-zinc-300"
+                                value={paymentNote}
+                                onChange={(e) => setPaymentNote(e.target.value)}
+                              />
                             </div>
 
                             <div className="grid grid-cols-2 gap-4">
@@ -1126,6 +1262,92 @@ export default function Home() {
           </div>
         </div>
       </div>
+      {/* Detailed Transaction Modal */}
+      {isDetailModalOpen && selectedTxn && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="relative p-8 text-center bg-gradient-to-b from-blue-600 to-indigo-700 text-white">
+              <button 
+                onClick={() => setIsDetailModalOpen(false)}
+                className="absolute right-6 top-6 w-10 h-10 rounded-full bg-white/10 flex items-center justify-center hover:bg-white/20 transition-colors"
+              >
+                ✕
+              </button>
+              <div className="w-20 h-20 rounded-3xl bg-white/20 backdrop-blur-md flex items-center justify-center text-4xl mx-auto mb-6 shadow-xl">
+                💸
+              </div>
+              <h3 className="text-3xl font-black tracking-tight mb-2">₹{selectedTxn.amount.toLocaleString("en-IN")}</h3>
+              <p className="text-sm font-bold text-blue-100 uppercase tracking-[0.2em]">Transaction Receipt</p>
+              
+              <div className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 backdrop-blur-md text-[10px] font-black uppercase tracking-widest">
+                <span className={`w-2 h-2 rounded-full ${
+                  selectedTxn.status === "COMPLETED" ? "bg-emerald-400" :
+                  selectedTxn.status === "FAILED" ? "bg-red-400" : "bg-amber-400"
+                }`}></span>
+                {selectedTxn.status}
+              </div>
+            </div>
+
+            <div className="p-8 space-y-6">
+              <div className="grid grid-cols-2 gap-8">
+                <div>
+                  <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-2">Sender Details</p>
+                  <p className="text-sm font-black text-zinc-900">{selectedTxn.senderName}</p>
+                  <p className="text-[11px] font-bold text-zinc-500 font-mono">{selectedTxn.senderVpa}</p>
+                  <p className="text-[11px] font-bold text-zinc-400 mt-1">{selectedTxn.senderBankName} • {selectedTxn.senderAccountNumber.slice(-4).padStart(selectedTxn.senderAccountNumber.length, "*")}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-2">Receiver Details</p>
+                  <p className="text-sm font-black text-zinc-900">{selectedTxn.receiverName}</p>
+                  <p className="text-[11px] font-bold text-zinc-500 font-mono">{selectedTxn.receiverVpa}</p>
+                  <p className="text-[11px] font-bold text-zinc-400 mt-1">{selectedTxn.receiverBankName} • {selectedTxn.receiverAccountNumber.slice(-4).padStart(selectedTxn.receiverAccountNumber.length, "*")}</p>
+                </div>
+              </div>
+
+              <div className="h-px bg-zinc-100"></div>
+
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Transaction ID</span>
+                  <span className="text-xs font-black text-zinc-900 font-mono">{selectedTxn.id}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Date & Time</span>
+                  <span className="text-xs font-black text-zinc-900">
+                    {new Date(selectedTxn.timestamp).toLocaleString("en-IN", { 
+                      day: "numeric", 
+                      month: "long", 
+                      year: "numeric", 
+                      hour: "2-digit", 
+                      minute: "2-digit",
+                      second: "2-digit"
+                    })}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Type</span>
+                  <span className={`text-xs font-black uppercase tracking-widest ${
+                    selectedTxn.type === "CREDIT" ? "text-emerald-600" : "text-red-600"
+                  }`}>{selectedTxn.type}</span>
+                </div>
+                {selectedTxn.paymentNote && (
+                  <div className="pt-4 p-4 rounded-2xl bg-zinc-50 border border-zinc-100">
+                    <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block mb-1">Payment Note</span>
+                    <p className="text-sm font-bold text-zinc-700 italic">"{selectedTxn.paymentNote}"</p>
+                  </div>
+                )}
+              </div>
+
+              <button 
+                onClick={() => window.print()}
+                className="w-full h-14 rounded-2xl bg-zinc-900 text-white text-sm font-black uppercase tracking-widest hover:bg-zinc-800 transition-all active:scale-95 shadow-xl shadow-zinc-200 mt-4"
+              >
+                🖨️ Print Receipt
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

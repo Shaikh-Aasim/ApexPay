@@ -7,6 +7,32 @@ export type InitiateRequest = {
   deviceId: string;
   location: string;
   pin?: string;
+  paymentNote?: string;
+};
+
+export type TransactionHistoryItem = {
+  id: string;
+  amount: number;
+  status: string;
+  timestamp: string;
+  paymentNote?: string;
+  type: "DEBIT" | "CREDIT";
+  name: string;
+  vpa: string;
+  accountNumber: string;
+  bankName: string;
+  senderName: string;
+  senderVpa: string;
+  senderAccountNumber: string;
+  senderBankName: string;
+  receiverName: string;
+  receiverVpa: string;
+  receiverAccountNumber: string;
+  receiverBankName: string;
+};
+
+export type TransactionHistoryResponse = {
+  items: TransactionHistoryItem[];
 };
 
 export type InitiateResponse = {
@@ -237,6 +263,10 @@ export function getPaymentStatus(txnId: string): Promise<TxStatusResponse> {
 
 export function getNotifications(userId: string): Promise<NotificationsResponse> {
   return http<NotificationsResponse>(`/notifications?userId=${encodeURIComponent(userId)}`);
+}
+
+export function getTransactionHistory(): Promise<TransactionHistoryResponse> {
+  return http<TransactionHistoryResponse>("/payment/history");
 }
 
 export function simulateSettlementFailure(txnId: string, mode: "AFTER_DEBIT" | "BEFORE_CREDIT"): Promise<{ ok: boolean }> {
