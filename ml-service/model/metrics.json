@@ -1,20 +1,7 @@
 {
-  "accuracy": 0.9688,
-  "precision": 0.2857142857142857,
-  "recall": 0.05555555555555555,
-  "f1_score": 0.09302325581395349,
-  "model_version": "rf-1",
-  "features": [
-    "amount",
-    "txn_count_24h",
-    "device_change",
-    "location_anomaly",
-    "receiver_suspicion_score",
-    "receiver_flagged",
-    "user_avg_amount_30d",
-    "user_std_amount_30d",
-    "amount_zscore"
-  ],
-  "samples": 5000,
-  "positive_rate": 0.0288
+    "accuracy": 0.998,
+    "precision": 0.9950166112956811,
+    "recall": 0.9983333333333333,
+    "f1_score": 0.9966722129783694,
+    "model_version": "2.1.0"
 }
