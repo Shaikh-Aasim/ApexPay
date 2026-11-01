@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import List
+import numpy as np
 
 # List of all features used by the model
 FEATURES: List[str] = [
@@ -29,21 +30,41 @@ FEATURES: List[str] = [
     "amount_percentile_global"
 ]
 
-def calculate_zscore(amount: float, avg: float, std: float) -> float:
+
+# def calculate_zscore(amount: float, avg: float, std: float) -> float:
+def calculate_zscore(amount: float, avg: float, std: float, stability: float = 0.0, periodic: float = 0.0) -> float:
     """
-    Safely calculates z-score with fallback logic.
-    If std is 0, we check if the amount is exactly the average.
-    If it's significantly different from the average even with 0 std, 
-    we assign a moderate 'virtual' z-score of 1.5 to indicate slight risk.
+    Balanced z-score:
+    - Handles std=0 safely
+    - Reduces extreme deviations (prevents FP)
+    - Preserves relative anomaly signal (keeps FN stable)
     """
+
+    # ✅ Step 1: Safe std
     if std <= 0:
-        # Fallback: if amount is close to avg, zscore is 0. 
-        # If it's different, we flag it as slightly unusual.
         diff = abs(amount - avg)
-        if diff < 1.0: # Basically the same
+        if diff < 1.0:
             return 0.0
-        return 1.5 # Moderate risk fallback
-    return (amount - avg) / std
+        return 1.5  # keep your fallback
+
+    # ✅ Step 2: Log transform (reduces skew)
+    amount = max(amount, 0)
+    avg = max(avg, 0)
+
+    amount_log = np.log1p(amount)
+    avg_log = np.log1p(avg)
+
+    # IMPORTANT: scale std also
+    std_log = std / (avg + 1e-3)
+
+    z = (amount_log - avg_log) / max(std_log, 1e-3)
+
+    # ✅ Step 3: Soft clipping (VERY IMPORTANT)
+    z = np.tanh(z / 3) * 5
+    # 🔥 Reduce FP for stable/periodic behavior
+    if stability > 0.8 or periodic:
+        z *= 0.6
+    return float(z)
 
 def get_feature_vector(data: dict) -> List[float]:
     """Converts input dictionary to a feature vector for the model."""

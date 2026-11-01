@@ -108,7 +108,7 @@ def main():
     
     # Realistic: 98/2 split (more realistic for fraud)
     n_total_realistic = 500
-    n_fraud_realistic = int(n_total_realistic * 0.05) # 5% fraud
+    n_fraud_realistic = int(n_total_realistic * 0.1) # 5% fraud
     n_normal_realistic = n_total_realistic - n_fraud_realistic
     
     df_normal = df_full[df_full['label'] == 0].head(n_normal_realistic)

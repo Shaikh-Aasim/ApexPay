@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { env } from "../config/env";
 
-export const fraudTypeSchema = z.enum(["PHISHING", "QR_SCAM", "ACCOUNT_TAKEOVER", "MULE_ACCOUNT", "UNKNOWN"]);
+export const fraudTypeSchema = z.enum(["PHISHING", "QR_SCAM", "ACCOUNT_TAKEOVER", "MULE_ACCOUNT", "UNKNOWN", "FIRST_TXN_HIGH_AMOUNT" ]);
 export type FraudType = z.infer<typeof fraudTypeSchema>;
 
 export const decisionSchema = z.enum(["LOW", "MEDIUM", "HIGH"]);
@@ -17,6 +17,7 @@ export const riskRequestSchema = z.object({
   user_avg_amount_30d: z.number().nonnegative(),
   user_std_amount_30d: z.number().positive(),
   amount_zscore: z.number(),
+  is_first_transaction: z.boolean().optional(),
 });
 export type RiskRequest = z.infer<typeof riskRequestSchema>;
 

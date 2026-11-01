@@ -133,7 +133,20 @@ export async function initiatePayment(args: {
   const avg = stats30d.avg > 0 ? stats30d.avg : args.amount;
   const std = stats30d.std > 0 ? stats30d.std : Math.max(1, avg * 0.2);
   const amountZ = (args.amount - avg) / std;
+  // 🔥 NEW LOGIC: detect first transaction
+  const totalTxnRes = await pool.query(
+    `SELECT COUNT(*) FROM transactions WHERE sender_user_id = $1`,
+    [sender.userId]
+  );
 
+  const totalTxnCount = parseInt(totalTxnRes.rows[0].count, 10);
+
+  // safer version (recommended)
+  const isFirstTransaction = totalTxnCount <= 1;
+
+  // debug
+  console.log("TOTAL TXN COUNT:", totalTxnCount);
+  console.log("IS FIRST TRANSACTION:", isFirstTransaction);
   const riskPayload: RiskRequest = {
     amount: args.amount,
     txn_count_24h: txnCount24h,
@@ -144,6 +157,8 @@ export async function initiatePayment(args: {
     user_avg_amount_30d: avg,
     user_std_amount_30d: std,
     amount_zscore: amountZ,
+    is_first_transaction: isFirstTransaction,
+    // account_age_hours: userAgeHours,
   };
 
   const ml = await predictRisk(riskPayload);

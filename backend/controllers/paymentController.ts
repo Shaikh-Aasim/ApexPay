@@ -32,6 +32,7 @@ const cancelSchema = z.object({
 export async function initiate(req: AuthRequest, res: Response): Promise<void> {
   const body = initiateSchema.parse(req.body);
   console.log(`Payment initiated by user: ${req.user?.userId} (${req.user?.name})`);
+  console.log("REQUEST BODY:", req.body);
   const result = await initiatePayment({
     ...body,
     senderUserId: req.user?.userId,

@@ -53,7 +53,7 @@ def heuristic_risk(
         reasons.append("High transaction frequency (24h)")
         fraud_type = "VELOCITY"
     elif txn_count_24h >= 6:
-        score += 0.15
+        score += 0.20
         reasons.append("Elevated transaction frequency")
 
     # 4. Security signals
@@ -89,16 +89,50 @@ def heuristic_risk(
             reasons.append("First transaction for this user")
 
     if account_age_hours < 24:
-        score += 0.10
-        reasons.append("Very new account (< 24h)")
+        if amount >= 60000:
+            score += 0.30
+            reasons.append("New account + high amount")
+        else:
+            score += 0.15
+            reasons.append("Very new account (< 24h)")
 
+    if txn_count_24h >= 10 and amount >= 10000:
+        score += 0.25
+        reasons.append("High frequency + significant amount")
     # 7. Pattern Recognition (False Positive Reduction)
-    if is_periodic_pattern:
-        score -= 0.25
+    if is_periodic_pattern and score < 0.5:
+        score -= 0.15
         reasons.append("Periodic transaction pattern detected (Reduced Risk)")
+    if amount >= 50000 and device_change == 1:
+        score += 0.25
+        reasons.append("High amount + new device")
+    if amount >= 50000 and location_anomaly == 1:
+        score += 0.25
+        reasons.append("High amount + unusual location")
 
-    score = clamp01(score)
+    if txn_count_24h >= 10 and receiver_suspicion_score >= 0.7:
+        score += 0.30
+        reasons.append("High velocity to suspicious receiver")
 
+    # Drain-like pattern (approximation)
+    if (not is_first_transaction and 
+        amount >= 50000 and 
+        abs(amount_zscore) >= 2):
+        
+        score += 0.30
+        reasons.append("Sudden high-value anomaly (possible drain pattern)")
+    # Burst attack approximation
+    if txn_count_24h >= 10 and (device_change == 1 or location_anomaly == 1):
+        score += 0.30
+        reasons.append("High activity with environment change (burst pattern)")
+    # Strong escalation
+    if abs(amount_zscore) >= 3:
+        score += 0.40
+        reasons.append("Extreme deviation from normal behavior")
+    # Silent fraud (smurfing)
+    if txn_count_24h >= 15 and amount < 10000:
+        score += 0.30
+        reasons.append("Multiple small transactions (stealth pattern)")
     # Final Decision based on score
     if score < 0.35:
         decision = "LOW"
@@ -108,16 +142,42 @@ def heuristic_risk(
         decision = "HIGH"
 
     # Rule overrides
-    if receiver_flagged == 1:
+    if is_first_transaction and amount >= 60000:
         decision = "HIGH"
         score = max(score, 0.9)
-    
-    if is_first_transaction and amount > threshold_first_txn:
-        # Special rule: First txn + high amount -> MEDIUM (HOLD)
-        if decision == "LOW":
-            decision = "MEDIUM"
-            score = max(score, 0.5)
+        reasons.append("First transaction with very high amount (CRITICAL)")
+        fraud_type = "FIRST_TXN_HIGH_AMOUNT"
 
+    elif receiver_flagged == 1 and amount >= 20000:
+        decision = "HIGH"
+        score = 1.0
+        reasons.append("Transfer to flagged account with high amount")
+
+    elif device_change == 1 and location_anomaly == 1 and amount >= 20000:
+        decision = "HIGH"
+        score = max(score, 0.9)
+        reasons.append("Device + location + amount anomaly (CRITICAL)")
+        fraud_type = "ACCOUNT_TAKEOVER"
+
+    elif (
+    txn_count_24h >= 8 and 
+    amount >= 20000 and 
+    (device_change == 1 or location_anomaly == 1)
+):
+        decision = "HIGH"
+        score = 1.0
+        reasons.append("High activity + anomaly + amount (coordinated fraud)")
+    # if receiver_flagged == 1:
+    #     decision = "HIGH"
+    #     score = max(score, 0.9)
+    
+        # score = clamp01(score)
+    # if is_first_transaction and amount > threshold_first_txn:
+    #     # Special rule: First txn + high amount -> MEDIUM (HOLD)
+    #     if decision == "LOW":
+    #         decision = "MEDIUM"
+    #         score = max(score, 0.5)
+    score = clamp01(score)
     return HeuristicResult(
         risk_score=score,
         decision=decision,

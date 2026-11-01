@@ -125,7 +125,8 @@ def generate_test_dataset(n_samples: int = 3000, fraud_ratio: float = 0.3, seed:
             receiver = rng.choice(user_pool)
 
         if case == "first_txn":
-            amount = rng.uniform(5000, 25000)
+            # amount = rng.uniform(50000, 2000)
+            amount = rng.uniform(50000, 1000000000) 
             row = create_base_row(rng, amount, 500, 100, sender=sender, receiver=receiver, first_txn=True, total_txn=1, age=0.5)
             add_row(row, 1, "fraud_first_txn")
         elif case == "ato":
@@ -137,7 +138,7 @@ def generate_test_dataset(n_samples: int = 3000, fraud_ratio: float = 0.3, seed:
             row = create_base_row(rng, amount, u_avg, u_std, sender=sender, receiver=receiver, txns_24h=rng.integers(13, 25), age=u_age, total_txn=u_txns)
             add_row(row, 1, "fraud_velocity")
         elif case == "zscore":
-            amount = u_avg + (u_std * rng.uniform(6, 15))
+            amount = u_avg + (u_std * rng.uniform(2.5, 8))
             row = create_base_row(rng, amount, u_avg, u_std, sender=sender, receiver=receiver, age=u_age, total_txn=u_txns)
             add_row(row, 1, "fraud_high_zscore")
         elif case == "mule":
@@ -234,22 +235,31 @@ def create_base_row(rng, amount, u_avg, u_std, **kwargs):
         "receiver_suspicion_score": float(kwargs.get("suspicion", rng.beta(2, 10))),
         "user_avg_amount_30d": u_avg,
         "user_std_amount_30d": u_std,
-        "amount_zscore": calculate_zscore(amount, u_avg, u_std),
+        # "amount_zscore": calculate_zscore(amount, u_avg, u_std),
+        "amount_zscore": calculate_zscore(
+    amount,
+    u_avg,
+    u_std,
+    stability=kwargs.get("stability", 0),
+    periodic=kwargs.get("periodic", False)
+),
         "is_first_transaction": float(kwargs.get("first_txn", False)),
         "user_total_txn": float(kwargs.get("total_txn", rng.integers(10, 500))),
         "account_age_hours": float(kwargs.get("age", rng.uniform(24, 8760))),
         "is_periodic_pattern": float(kwargs.get("periodic", False)),
         "day_of_month": float(rng.integers(1, 31)),
         "relationship_stability_score": float(kwargs.get("stability", rng.uniform(0.1, 0.6))),
-        "is_high_amount_global": 1.0 if amount > 50000 else 0.0,
+        "is_high_amount_global": 1.0 if amount > 65000 else 0.0,
         "amount_percentile_global": rng.uniform(0.1, 0.9)
     }
     
     # Add Gaussian noise to all numerical fields for realism
     # and to create overlap between classes
-    noise_factor = 0.02 # 2% noise
+    noise_factor = 0.06 # 2% noise
     for key in row:
-        if isinstance(row[key], float) and key not in ["device_change", "location_anomaly", "receiver_flagged", "is_first_transaction", "is_periodic_pattern", "is_high_amount_global"]:
+        if isinstance(row[key], float) and key not in ["device_change", "location_anomaly", "receiver_flagged", "is_first_transaction", "is_periodic_pattern", "is_high_amount_global", "amount_zscore",
+        "user_avg_amount_30d",          # 🔥 ADD THIS
+        "user_std_amount_30d"   ]:
             row[key] += rng.normal(0, abs(row[key]) * noise_factor)
             
     return row
@@ -264,11 +274,11 @@ def generate_large_scale_test_suite():
     print("\nGenerating Large Scale Test Suite (10k-15k samples)...")
     
     # 1. Balanced Dataset (50% Fraud, 50% Normal)
-    df_balanced, y_balanced, _ = generate_test_dataset(n_samples=5000, fraud_ratio=0.5, seed=101)
+    df_balanced, y_balanced, _ = generate_test_dataset(n_samples=50000, fraud_ratio=0.5, seed=101)
     df_balanced['label'] = y_balanced
     
     # 2. Realistic Dataset (10% Fraud, 90% Normal)
-    df_realistic, y_realistic, _ = generate_test_dataset(n_samples=5000, fraud_ratio=0.1, seed=202)
+    df_realistic, y_realistic, _ = generate_test_dataset(n_samples=50000, fraud_ratio=0.1, seed=202)
     df_realistic['label'] = y_realistic
     
     # Combine or save separately
