@@ -19,12 +19,13 @@ def run_quick_evaluation():
     start_time = time.time()
     
     # 1. DATA PREPARATION
-    data_path = "test_data_mini.csv"
+    data_path = str(Path(__file__).resolve().parents[1] / "test_data_mini.csv")
     if not Path(data_path).exists():
         generate_mini_dataset(data_path, n_samples=1000)
     
     df = pd.read_csv(data_path)
     predictor = RiskPredictor()
+    predictor.graph_engine.enable_persistence = False
     
     print("\n" + "="*50)
     print("   FAST GRAPH VALIDATION PIPELINE")
@@ -77,7 +78,7 @@ def run_quick_evaluation():
         if predictor.model:
             from utils.features import get_feature_vector
             X = np.array([get_feature_vector(data)])
-            ml_score = float(predictor.model.predict_proba(X)[0][1])
+            ml_score = res_with.get("ml_probability", res_with.get("ml_score", 0.0))
             
         g_score = res_with.get("graph_score", 0)
         
@@ -180,7 +181,7 @@ def run_quick_evaluation():
         for s, r, a in transactions:
             predictor.update_graph(s, r, a)
             # Evaluate the target user, not necessarily the sender
-            res = predictor.predict({"sender_id": target_user, "receiver_id": "dummy", "amount": 0})
+            res = predictor.predict({"sender_id": target_user, "receiver_id": "eval_counterparty", "amount": 100.0, "relationship_stability_score": 0.2})
             final_dec = res["decision"]
         
         status = "PASSED" if final_dec == expected_decision else "FAILED"

@@ -30,8 +30,6 @@ FEATURES: List[str] = [
     "amount_percentile_global"
 ]
 
-
-# def calculate_zscore(amount: float, avg: float, std: float) -> float:
 def calculate_zscore(amount: float, avg: float, std: float, stability: float = 0.0, periodic: float = 0.0) -> float:
     """
     Balanced z-score:
@@ -39,40 +37,41 @@ def calculate_zscore(amount: float, avg: float, std: float, stability: float = 0
     - Reduces extreme deviations (prevents FP)
     - Preserves relative anomaly signal (keeps FN stable)
     """
-
-    # ✅ Step 1: Safe std
+    # Safe std
     if std <= 0:
         diff = abs(amount - avg)
         if diff < 1.0:
             return 0.0
-        return 1.5  # keep your fallback
+        return 1.5
 
-    # ✅ Step 2: Log transform (reduces skew)
+    # Log transform (reduces skew)
     amount = max(amount, 0)
     avg = max(avg, 0)
 
     amount_log = np.log1p(amount)
     avg_log = np.log1p(avg)
 
-    # IMPORTANT: scale std also
+    # Scale std proportionally
     std_log = std / (avg + 1e-3)
 
     z = (amount_log - avg_log) / max(std_log, 1e-3)
 
-    # ✅ Step 3: Soft clipping (VERY IMPORTANT)
+    # Soft clipping
     z = np.tanh(z / 3) * 5
-    # 🔥 Reduce FP for stable/periodic behavior
+
+    # Reduce FP for stable/periodic behavior
     if stability > 0.8 or periodic:
         z *= 0.6
     return float(z)
 
 def get_feature_vector(data: dict) -> List[float]:
-    """Converts input dictionary to a feature vector for the model."""
+    """Converts input dictionary to a feature vector for the model with null-safety."""
     vector = []
     for feature in FEATURES:
         val = data.get(feature, 0.0)
-        # Convert boolean to float
-        if isinstance(val, bool):
+        if val is None:
+            val = 0.0
+        elif isinstance(val, bool):
             val = 1.0 if val else 0.0
         vector.append(float(val))
     return vector

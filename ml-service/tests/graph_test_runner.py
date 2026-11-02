@@ -42,13 +42,14 @@ def run_validation(mode="MINI"):
     start_time = time.time()
     
     # 1. DATA PREPARATION
-    data_path = f"graph_test_data_{mode.lower()}.csv"
+    data_path = str(Path(__file__).resolve().parents[1] / f"graph_test_data_{mode.lower()}.csv")
     if not Path(data_path).exists():
         generate_graph_test_data(mode, data_path)
     
     df = pd.read_csv(data_path)
     predictor = RiskPredictor()
     predictor.graph_engine.reset()
+    predictor.graph_engine.enable_persistence = False
     
     print(f"Dataset: {len(df)} samples")
     
@@ -190,13 +191,14 @@ def run_validation(mode="MINI"):
     
     def run_micro_test(name, transactions, target_user, expected_decision, stability=0.5):
         predictor.graph_engine.reset()
+        predictor.graph_engine.enable_persistence = False
         for s, r, a in transactions:
             predictor.graph_engine.add_transaction(s, r, a)
         
         # Use a dummy transaction to check target user risk
         res = predictor.predict({
             "sender_id": target_user, 
-            "receiver_id": "dummy", 
+            "receiver_id": "eval_counterparty", 
             "amount": 100,
             "relationship_stability_score": stability
         })

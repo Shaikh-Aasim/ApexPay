@@ -148,6 +148,8 @@ export async function initiatePayment(args: {
   console.log("TOTAL TXN COUNT:", totalTxnCount);
   console.log("IS FIRST TRANSACTION:", isFirstTransaction);
   const riskPayload: RiskRequest = {
+    sender_id: sender.userId,
+    receiver_id: receiver.userId,
     amount: args.amount,
     txn_count_24h: txnCount24h,
     device_change: deviceChange,

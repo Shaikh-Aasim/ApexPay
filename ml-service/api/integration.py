@@ -4,104 +4,132 @@ from utils.graph_score import calculate_graph_score
 
 def combine_scores(ml_score: float, rule_score: float, graph_score: float) -> float:
     """
-    Combines ML, Rules, and Graph scores using weighted averaging.
-    PRODUCTION WEIGHTS: 0.6 * ML + 0.25 * Rules + 0.15 * Graph
+    Combines ML, Rules, and Graph scores using adaptive weighted averaging.
+    Output is strictly clamped in [0.0, 1.0].
     
-    IMPROVED (ADAPTIVE):
-    - If ML is low (<0.3), graph weight increases slightly (0.6 ML, 0.2 Rules, 0.2 Graph)
-    - If ML is high (>0.7), graph weight stays low (0.15) to avoid over-trigger.
+    ADAPTIVE WEIGHTING:
+    - If ML is uncertain (< 0.25): Rules and Graph provide foundation (0.45 ML, 0.30 Rules, 0.25 Graph).
+    - If ML is very confident (> 0.75): ML weight increases (0.65 ML, 0.20 Rules, 0.15 Graph).
+    - Standard balanced weights: (0.55 ML, 0.25 Rules, 0.20 Graph).
     """
-    if ml_score < 0.3:
-        # Increase graph weight slightly when ML is uncertain/low
-        final_score = (0.6 * ml_score) + (0.2 * rule_score) + (0.2 * graph_score)
+    if ml_score < 0.25:
+        final_score = (0.45 * ml_score) + (0.30 * rule_score) + (0.25 * graph_score)
+    elif ml_score > 0.75:
+        final_score = (0.65 * ml_score) + (0.20 * rule_score) + (0.15 * graph_score)
     else:
-        # Standard weights
-        final_score = (0.6 * ml_score) + (0.25 * rule_score) + (0.15 * graph_score)
+        final_score = (0.55 * ml_score) + (0.25 * rule_score) + (0.20 * graph_score)
         
-    return round(float(final_score), 4)
+    return round(float(max(0.0, min(1.0, final_score))), 4)
 
 def get_final_decision(final_score: float, rule_decision: str, 
                        graph_score: float, ml_score: float, 
                        signals_count: int, stability: float) -> str:
     """
-    Implements decision logic (PRODUCTION READY):
-    - LOW: Normal activity
-    - MEDIUM: HOLD (OTP verification)
-    - HIGH: BLOCK
+    Implements production-grade 3-tier decision logic:
+    - LOW: Normal activity, approved immediately [0.0, 0.42)
+    - MEDIUM: HOLD for OTP / Step-Up Authentication [0.42, 0.75)
+    - HIGH: BLOCK / Reject [0.75, 1.0]
     
-    IMPROVED:
-    - Balanced for Precision (>=85%) and Recall (>=50%)
-    - Uses stability to filter out noisy business hubs
+    Balances high recall for real threats with high precision for legitimate users.
     """
-    # 1. GRAPH + WEAK SIGNAL COMBINATION (INCREASE RECALL)
-    # If graph_score >= 0.3 AND at least 1 other signal exists -> upgrade to MEDIUM
-    # Note: signals_count includes graph_risk if graph_score >= 0.35, 
-    # so signals_count >= 2 means graph + 1 other signal.
-    is_weak_graph_combo = graph_score >= 0.3 and signals_count >= 2
-    is_stealth_combo = graph_score >= 0.4 and signals_count >= 2 and stability < 0.4
-    is_strong_graph_combo = graph_score >= 0.6 and signals_count >= 2
-    
-    # 2. Base decision from final score
+    # 1. Base decision from final score
     if final_score < 0.42:
         decision = "LOW"
-    elif final_score < 0.78:
+    elif final_score < 0.75:
         decision = "MEDIUM"
     else:
         decision = "HIGH"
 
-    # 3. Rule 'HIGH' override
+    # 2. Rule 'HIGH' override takes absolute priority
     if rule_decision == "HIGH":
         return "HIGH"
 
-    # 4. Graph-driven upgrades (CONTROLLED RECALL)
-    if graph_score >= 0.85 and signals_count >= 3:
+    # 3. Rule 'MEDIUM' override (Step-Up Safeguard)
+    if rule_decision == "MEDIUM":
+        if stability > 0.85 and ml_score < 0.20 and graph_score < 0.30:
+            decision = "LOW"
+        else:
+            decision = "MEDIUM"
+
+    # 4. Graph-driven upgrades
+    if graph_score >= 0.85:
+        return "HIGH"
+    elif graph_score >= 0.70 and signals_count >= 1:
         decision = "HIGH"
-    elif (is_weak_graph_combo or is_stealth_combo or is_strong_graph_combo) and decision == "LOW":
+    elif (graph_score >= 0.40 and signals_count >= 1 and stability < 0.4) and decision == "LOW":
+        decision = "MEDIUM"
+    elif graph_score >= 0.55 and decision == "LOW":
         decision = "MEDIUM"
 
-    # 5. ML Confidence Gating (Safety)
-    if ml_score < 0.1 and decision != "HIGH":
-        # If ML is confident it's normal, only allow MEDIUM if graph is very strong or stability is very low
-        if decision == "MEDIUM" and graph_score < 0.55 and stability > 0.2:
+    # 5. ML Confidence Gating
+    if ml_score >= 0.75 and decision == "LOW":
+        decision = "MEDIUM"
+    if ml_score >= 0.88 and signals_count >= 1:
+        decision = "HIGH"
+
+    # 6. Multi-Signal Confirmation & False Positive Filtering (Precision Protection)
+    if stability > 0.75 and rule_decision == "LOW":
+        if decision == "HIGH" and ml_score < 0.85:
+            decision = "MEDIUM"
+        elif decision == "MEDIUM" and ml_score < 0.45 and graph_score < 0.50:
             decision = "LOW"
-            
-    # 6. MULTI-SIGNAL FILTER (Precision Focus)
-    if signals_count < 2 and ml_score < 0.8 and rule_decision != "HIGH":
+
+    if signals_count < 2 and ml_score < 0.80 and rule_decision == "LOW" and graph_score < 0.85:
         if decision == "HIGH":
             decision = "MEDIUM"
-        elif decision == "MEDIUM" and graph_score < 0.65:
+        elif decision == "MEDIUM" and graph_score < 0.50 and stability > 0.4:
             decision = "LOW"
-            
+
     return decision
 
 def integrate_graph_intelligence(data: Dict[str, Any], ml_score: float, 
                                  rule_res: Any, engine: GraphEngine) -> Dict[str, Any]:
     """
-    Orchestrates the integration of graph intelligence with existing scores.
-    Implements multi-signal confirmation, adaptive weighting, and improved recall logic.
+    Orchestrates the integration of graph intelligence with ML and heuristic scores.
+    Separates sender and receiver context so sender attributes (e.g., first txn,
+    account age) are never improperly applied to the receiver.
+    Implements multi-signal confirmation, adaptive weighting, and balanced decision gating.
     """
-    sender_id = data.get("sender_id", "unknown_sender")
-    receiver_id = data.get("receiver_id", "unknown_receiver")
-    stability = float(data.get("relationship_stability_score", data.get("relationship_stability", 0.5)))
-    is_first = bool(data.get("is_first_transaction", False))
-    age_hours = float(data.get("account_age_hours", 0.0))
+    sender_id = str(data.get("sender_id", ""))
+    receiver_id = str(data.get("receiver_id", ""))
+    stability = float(data.get("relationship_stability_score", data.get("relationship_stability", 0.0)))
     
-    # Calculate graph-based score for both nodes
-    g_res_sender = calculate_graph_score(sender_id, stability, engine, is_first, age_hours)
-    g_res_receiver = calculate_graph_score(receiver_id, stability, engine, is_first, age_hours)
+    # Decoupled Sender Context
+    sender_is_first = bool(data.get("is_first_transaction", data.get("sender_is_first_transaction", False)))
+    sender_age_hours = float(data.get("account_age_hours", data.get("sender_account_age_hours", 720.0)))
     
-    # Take the riskier side
-    g_res = g_res_sender if g_res_sender["graph_score"] >= g_res_receiver["graph_score"] else g_res_receiver
+    # Decoupled Receiver Context
+    receiver_is_first = bool(data.get("receiver_is_first_transaction", False))
+    # RiskRequest intentionally models receiver context as Optional because the
+    # caller may not have receiver-history data. dict.get(key, default) does not
+    # apply the default when the key exists with value None (as model_dump does).
+    # Use the neutral cold-start fallback in that case instead of float(None).
+    receiver_age_value = data.get("receiver_account_age_hours")
+    receiver_age_hours = float(720.0 if receiver_age_value is None else receiver_age_value)
+    
+    # Calculate graph-based score for both nodes independently
+    g_res_sender = calculate_graph_score(sender_id, stability, engine, sender_is_first, sender_age_hours)
+    g_res_receiver = calculate_graph_score(receiver_id, stability, engine, receiver_is_first, receiver_age_hours)
+    
+    # Select higher risk profile between the counterparties
+    if g_res_sender["graph_score"] >= g_res_receiver["graph_score"]:
+        g_res = g_res_sender
+        primary_graph_node = "sender"
+    else:
+        g_res = g_res_receiver
+        primary_graph_node = "receiver"
+        
     graph_score = g_res["graph_score"]
 
-    # MULTI-SIGNAL CONFIRMATION logic (Refined for precision)
+    # MULTI-SIGNAL CONFIRMATION logic
     signals = []
-    # Relaxed zscore slightly to capture stealth fraud (from 2.0 to 1.5)
     if abs(float(data.get("amount_zscore", 0))) >= 1.5: signals.append("high_zscore")
     if int(data.get("device_change", 0)) == 1: signals.append("device_change")
-    if graph_score >= 0.35: signals.append("graph_risk") # Slightly more sensitive
-    if int(data.get("txn_count_24h", 0)) >= 5: signals.append("velocity_flag")
     if int(data.get("location_anomaly", 0)) == 1: signals.append("location_anomaly")
+    if int(data.get("txn_count_24h", 0)) >= 5: signals.append("velocity_flag")
+    if int(data.get("receiver_flagged", 0)) == 1 or float(data.get("receiver_suspicion_score", 0)) >= 0.7: signals.append("receiver_risk")
+    if graph_score >= 0.35: signals.append("graph_risk")
+    if sender_is_first and float(data.get("amount", 0)) >= 10000: signals.append("first_txn_elevated")
     
     signals_count = len(signals)
 
@@ -111,16 +139,30 @@ def integrate_graph_intelligence(data: Dict[str, Any], ml_score: float,
     # Final decision
     decision = get_final_decision(final_score, rule_res.decision, graph_score, ml_score, signals_count, stability)
     
-    # Debug Support (Internal)
+    # Harmonize final risk score with authoritative decision band
+    if decision == "HIGH":
+        final_score = max(final_score, rule_res.risk_score, 0.85)
+    elif decision == "MEDIUM":
+        final_score = max(0.48, min(0.74, max(final_score, rule_res.risk_score)))
+    else:  # LOW
+        final_score = min(final_score, 0.38)
+
+    final_score = round(float(max(0.0, min(1.0, final_score))), 4)
+
+    # Internal Debug Support
     debug_support = {
         "signals_count": signals_count,
         "triggered_signals": signals,
         "ml_confidence": round(ml_score, 4),
+        "rule_confidence": round(rule_res.risk_score, 4),
+        "sender_graph_score": g_res_sender["graph_score"],
+        "receiver_graph_score": g_res_receiver["graph_score"],
+        "primary_graph_node": primary_graph_node,
         "graph_score_raw": g_res["graph_score"],
         "graph_risk_level": g_res["risk_level"],
         "graph_components": g_res["components"],
         "graph_flags": g_res.get("debug_info", {}).get("mule_flags", []) + g_res.get("debug_info", {}).get("ring_flags", []),
-        "decision_reason": f"Final score {final_score} with {signals_count} signals"
+        "decision_reason": f"Final score {final_score:.4f} with {signals_count} confirmed signals"
     }
     
     return {

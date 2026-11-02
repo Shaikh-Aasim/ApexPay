@@ -1,13 +1,15 @@
 import { z } from "zod";
 import { env } from "../config/env";
 
-export const fraudTypeSchema = z.enum(["PHISHING", "QR_SCAM", "ACCOUNT_TAKEOVER", "MULE_ACCOUNT", "UNKNOWN", "FIRST_TXN_HIGH_AMOUNT" ]);
+export const fraudTypeSchema = z.enum(["PHISHING", "QR_SCAM", "ACCOUNT_TAKEOVER", "MULE_ACCOUNT", "UNKNOWN", "FIRST_TXN_HIGH_AMOUNT"]);
 export type FraudType = z.infer<typeof fraudTypeSchema>;
 
 export const decisionSchema = z.enum(["LOW", "MEDIUM", "HIGH"]);
 export type RiskDecision = z.infer<typeof decisionSchema>;
 
 export const riskRequestSchema = z.object({
+  sender_id: z.string().optional(),
+  receiver_id: z.string().optional(),
   amount: z.number().positive(),
   txn_count_24h: z.number().int().nonnegative(),
   device_change: z.number().int().min(0).max(1),
@@ -18,11 +20,16 @@ export const riskRequestSchema = z.object({
   user_std_amount_30d: z.number().positive(),
   amount_zscore: z.number(),
   is_first_transaction: z.boolean().optional(),
+  relationship_stability_score: z.number().min(0).max(1).optional(),
 });
 export type RiskRequest = z.infer<typeof riskRequestSchema>;
 
 const riskResponseSchema = z.object({
   risk_score: z.number().min(0).max(1),
+  combined_risk_score: z.number().min(0).max(1).optional(),
+  ml_probability: z.number().min(0).max(1).optional(),
+  rule_score: z.number().min(0).max(1).optional(),
+  graph_score: z.number().min(0).max(1).optional(),
   decision: decisionSchema,
   reasons: z.array(z.string()),
   fraud_type: fraudTypeSchema,
@@ -43,4 +50,3 @@ export async function predictRisk(payload: RiskRequest): Promise<RiskResponse> {
   const data = (await res.json()) as unknown;
   return riskResponseSchema.parse(data);
 }
-
